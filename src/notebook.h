@@ -23,9 +23,9 @@ class Notebook : public Gtk::Paned {
     Glib::RefPtr<Gtk::TextBuffer::Mark> mark;
   };
   
-private:
-  Notebook();
 public:
+  Notebook();
+  
   static Notebook &get() {
     static Notebook singleton;
     return singleton;

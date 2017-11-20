@@ -3,6 +3,8 @@
 
 #include <gtkmm.h>
 #include <atomic>
+#include <vector>
+#include "notebook_window.h"
 
 class Window : public Gtk::ApplicationWindow {
   Window();
@@ -20,6 +22,8 @@ private:
   Gtk::AboutDialog about;
   
   Glib::RefPtr<Gtk::CssProvider> css_provider;
+  
+  std::vector<NotebookWindow> notebookWindows;
 
   void configure();
   void set_menu_actions();

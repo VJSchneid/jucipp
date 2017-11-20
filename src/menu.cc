@@ -450,6 +450,10 @@ const Glib::ustring menu_xml= R"RAW(<interface>
       </section>
       <section>
         <item>
+          <attribute name='label' translatable='yes'>_Add _Notebook</attribute>
+          <attribute name='action'>app.window_add_notebook</attribute>
+        </item>
+        <item>
           <attribute name='label' translatable='yes'>_Toggle _Full _Screen</attribute>
           <attribute name='action'>app.window_toggle_full_screen</attribute>
         </item>

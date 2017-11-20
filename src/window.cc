@@ -1273,6 +1273,9 @@ void Window::set_menu_actions() {
   menu.add_action("window_toggle_split", [this] {
     Notebook::get().toggle_split();
   });
+  menu.add_action("window_add_notebook", [this] {
+    notebookWindows.emplace_back();
+  });
   menu.add_action("window_toggle_full_screen", [this] {
     if(this->get_window()->get_state() & Gdk::WindowState::WINDOW_STATE_FULLSCREEN)
       unfullscreen();

@@ -11,6 +11,7 @@ set(project_files
     info.cc
     juci.cc
     notebook.cc
+    notebook_window.cc
     project.cc
     selection_dialog.cc
     tooltips.cc
