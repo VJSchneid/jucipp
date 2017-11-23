@@ -1,7 +1,7 @@
 #include "window.h"
 #include "config.h"
 #include "menu.h"
-#include "notebook.h"
+#include "notebooks.h"
 #include "directories.h"
 #include "dialogs.h"
 #include "filesystem.h"
@@ -27,8 +27,10 @@ Window::Window() {
   auto directories_scrolled_window=Gtk::manage(new Gtk::ScrolledWindow());
   directories_scrolled_window->add(Directories::get());
   
+  
+  auto &notebook = Notebooks::get().create();
   auto notebook_vbox=Gtk::manage(new Gtk::Box(Gtk::Orientation::ORIENTATION_VERTICAL));
-  notebook_vbox->pack_start(Notebook::get());
+  notebook_vbox->pack_start(notebook);
   notebook_vbox->pack_end(EntryBox::get(), Gtk::PACK_SHRINK);
   
   auto terminal_scrolled_window=Gtk::manage(new Gtk::ScrolledWindow());
@@ -48,18 +50,18 @@ Window::Window() {
   status_hbox->set_homogeneous(true);
   status_hbox->pack_start(*Gtk::manage(new Gtk::Box()));
   auto status_right_hbox=Gtk::manage(new Gtk::Box());
-  status_right_hbox->pack_end(Notebook::get().status_state, Gtk::PACK_SHRINK);
+  status_right_hbox->pack_end(notebook.status_state, Gtk::PACK_SHRINK);
   auto status_right_overlay=Gtk::manage(new Gtk::Overlay());
   status_right_overlay->add(*status_right_hbox);
-  status_right_overlay->add_overlay(Notebook::get().status_diagnostics);
+  status_right_overlay->add_overlay(notebook.status_diagnostics);
   status_hbox->pack_end(*status_right_overlay);
   
   auto status_overlay=Gtk::manage(new Gtk::Overlay());
   status_overlay->add(*status_hbox);
   auto status_file_info_hbox=Gtk::manage(new Gtk::Box);
-  status_file_info_hbox->pack_start(Notebook::get().status_file_path, Gtk::PACK_SHRINK);
-  status_file_info_hbox->pack_start(Notebook::get().status_branch, Gtk::PACK_SHRINK);
-  status_file_info_hbox->pack_start(Notebook::get().status_location, Gtk::PACK_SHRINK);
+  status_file_info_hbox->pack_start(notebook.status_file_path, Gtk::PACK_SHRINK);
+  status_file_info_hbox->pack_start(notebook.status_branch, Gtk::PACK_SHRINK);
+  status_file_info_hbox->pack_start(notebook.status_location, Gtk::PACK_SHRINK);
   status_overlay->add_overlay(*status_file_info_hbox);
   status_overlay->add_overlay(Project::debug_status_label());
   
@@ -103,11 +105,14 @@ Window::Window() {
     notebook_vbox->unset_focus_chain();
   });
   EntryBox::get().signal_hide().connect([this]() {
-    if(auto view=Notebook::get().get_current_view())
-      view->grab_focus();
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+       if (auto view=notebook->get_current_view()) {
+         view->grab_focus();
+       }
+     }
   });
 
-  Notebook::get().on_change_page=[this](Source::View *view) {
+  Notebooks::get().on_change_page=[this](NotebookPaned *notebook, Source::View *view) {
     if(search_entry_shown && EntryBox::get().labels.size()>0) {
       view->update_search_occurrences=[this](int number){
         EntryBox::get().labels.begin()->update(0, std::to_string(number));
@@ -124,14 +129,14 @@ Window::Window() {
     else if(view->soft_reparse_needed)
       view->soft_reparse();
     
-    Notebook::get().update_status(view);
+    notebook->update_status(view);
     
 #ifdef JUCI_ENABLE_DEBUG
     if(Project::debugging)
       Project::debug_update_stop();
 #endif
   };
-  Notebook::get().on_close_page=[this](Source::View *view) {
+  Notebooks::get().on_close_page=[this](NotebookPaned *notebook, Source::View *view) {
 #ifdef JUCI_ENABLE_DEBUG
     if(Project::current && Project::debugging) {
       auto iter=view->get_buffer()->begin();
@@ -144,19 +149,23 @@ Window::Window() {
     }
 #endif
     EntryBox::get().hide();
-    if(auto view=Notebook::get().get_current_view())
-      Notebook::get().update_status(view);
-    else {
-      Notebook::get().clear_status();
-      
-      activate_menu_items();
+    if (auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view())
+        notebook->update_status(view);
+      else {
+        notebook->clear_status();
+        
+        activate_menu_items();
+      }
     }
   };
   
   signal_focus_out_event().connect([](GdkEventFocus *event) {
-    if(auto view=Notebook::get().get_current_view()) {
-      view->hide_tooltips();
-      view->hide_dialogs();
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        view->hide_tooltips();
+        view->hide_dialogs();
+      }
     }
     return false;
   });
@@ -172,8 +181,10 @@ Window::Window() {
   
   Gtk::Settings::get_default()->connect_property_changed("gtk-theme-name", [this] {
     Directories::get().update();
-    if(auto view=Notebook::get().get_current_view())
-      Notebook::get().update_status(view);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view())
+        notebook->update_status(view);
+    }
   });
   
   about.signal_response().connect([this](int d){
@@ -210,8 +221,10 @@ void Window::configure() {
   Menu::get().set_keys();
   Terminal::get().configure();
   Directories::get().update();
-  if(auto view=Notebook::get().get_current_view())
-    Notebook::get().update_status(view);
+  if(auto notebook=Notebooks::get().get_current_notebook()) {
+    if(auto view=notebook->get_current_view())
+      notebook->update_status(view);
+  }
 }
 
 void Window::set_menu_actions() {
@@ -222,197 +235,219 @@ void Window::set_menu_actions() {
     about.present();
   });
   menu.add_action("preferences", [this]() {
-    Notebook::get().open(Config::get().home_juci_path/"config"/"config.json");
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      notebook->open(Config::get().home_juci_path/"config"/"config.json");
+    }
   });
   menu.add_action("quit", [this]() {
     close();
   });
   
   menu.add_action("new_file", [this]() {
-    boost::filesystem::path path = Dialog::new_file(Notebook::get().get_current_folder());
-    if(path!="") {
-      if(boost::filesystem::exists(path)) {
-        Terminal::get().print("Error: "+path.string()+" already exists.\n", true);
-      }
-      else {
-        if(filesystem::write(path)) {
-          if(Directories::get().path!="")
-            Directories::get().update();
-          Notebook::get().open(path);
-          if(Directories::get().path!="")
-            Directories::get().on_save_file(path);
-          Terminal::get().print("New file "+path.string()+" created.\n");
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      boost::filesystem::path path = Dialog::new_file(notebook->get_current_folder());
+      if (!path.empty()) {
+        if(boost::filesystem::exists(path)) {
+          Terminal::get().print("Error: "+path.string()+" already exists.\n", true);
         }
-        else
-          Terminal::get().print("Error: could not create new file "+path.string()+".\n", true);
+        else {
+          if(filesystem::write(path)) {
+            if(Directories::get().path!="")
+              Directories::get().update();
+            notebook->open(path);
+            if(Directories::get().path!="")
+              Directories::get().on_save_file(path);
+            Terminal::get().print("New file "+path.string()+" created.\n");
+          }
+          else
+            Terminal::get().print("Error: could not create new file "+path.string()+".\n", true);
+          }
+        }
       }
-    }
   });
   menu.add_action("new_folder", [this]() {
-    auto time_now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    boost::filesystem::path path = Dialog::new_folder(Notebook::get().get_current_folder());
-    if(path!="" && boost::filesystem::exists(path)) {
-      boost::system::error_code ec;
-      auto last_write_time=boost::filesystem::last_write_time(path, ec);
-      if(!ec && last_write_time>=time_now) {
-        if(Directories::get().path!="")
-          Directories::get().update();
-        Terminal::get().print("New folder "+path.string()+" created.\n");
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      auto time_now=std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+      boost::filesystem::path path = Dialog::new_folder(notebook->get_current_folder());
+      if(!path.empty() && boost::filesystem::exists(path)) {
+        boost::system::error_code ec;
+        auto last_write_time=boost::filesystem::last_write_time(path, ec);
+        if(!ec && last_write_time>=time_now) {
+          if(Directories::get().path!="")
+            Directories::get().update();
+          Terminal::get().print("New folder "+path.string()+" created.\n");
+        }
+        else
+          Terminal::get().print("Error: "+path.string()+" already exists.\n", true);
+        Directories::get().select(path);
       }
-      else
-        Terminal::get().print("Error: "+path.string()+" already exists.\n", true);
-      Directories::get().select(path);
     }
   });
   menu.add_action("new_project_c", [this]() {
-    boost::filesystem::path project_path = Dialog::new_folder(Notebook::get().get_current_folder());
-    if(project_path!="") {
-      auto project_name=project_path.filename().string();
-      for(size_t c=0;c<project_name.size();c++) {
-        if(project_name[c]==' ')
-          project_name[c]='_';
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      boost::filesystem::path project_path = Dialog::new_folder(notebook->get_current_folder());
+      if(!project_path.empty()) {
+        auto project_name=project_path.filename().string();
+        for(size_t c=0;c<project_name.size();c++) {
+          if(project_name[c]==' ')
+            project_name[c]='_';
+        }
+        auto cmakelists_path=project_path;
+        cmakelists_path/="CMakeLists.txt";
+        auto c_main_path=project_path;
+        c_main_path/="main.c";
+        if(boost::filesystem::exists(cmakelists_path)) {
+          Terminal::get().print("Error: "+cmakelists_path.string()+" already exists.\n", true);
+          return;
+        }
+        if(boost::filesystem::exists(c_main_path)) {
+          Terminal::get().print("Error: "+c_main_path.string()+" already exists.\n", true);
+          return;
+        }
+        std::string cmakelists="cmake_minimum_required(VERSION 2.8)\n\nproject("+project_name+")\n\nset(CMAKE_C_FLAGS \"${CMAKE_C_FLAGS} -std=c11 -Wall -Wextra\")\n\nadd_executable("+project_name+" main.c)\n";
+        std::string c_main="#include <stdio.h>\n\nint main() {\n  printf(\"Hello World!\\n\");\n}\n";
+        if(filesystem::write(cmakelists_path, cmakelists) && filesystem::write(c_main_path, c_main)) {
+          Directories::get().open(project_path);
+          notebook->open(c_main_path);
+          Directories::get().update();
+          Terminal::get().print("C project "+project_name+" created.\n");
+        }
+        else
+          Terminal::get().print("Error: Could not create project "+project_path.string()+"\n", true);
       }
-      auto cmakelists_path=project_path;
-      cmakelists_path/="CMakeLists.txt";
-      auto c_main_path=project_path;
-      c_main_path/="main.c";
-      if(boost::filesystem::exists(cmakelists_path)) {
-        Terminal::get().print("Error: "+cmakelists_path.string()+" already exists.\n", true);
-        return;
-      }
-      if(boost::filesystem::exists(c_main_path)) {
-        Terminal::get().print("Error: "+c_main_path.string()+" already exists.\n", true);
-        return;
-      }
-      std::string cmakelists="cmake_minimum_required(VERSION 2.8)\n\nproject("+project_name+")\n\nset(CMAKE_C_FLAGS \"${CMAKE_C_FLAGS} -std=c11 -Wall -Wextra\")\n\nadd_executable("+project_name+" main.c)\n";
-      std::string c_main="#include <stdio.h>\n\nint main() {\n  printf(\"Hello World!\\n\");\n}\n";
-      if(filesystem::write(cmakelists_path, cmakelists) && filesystem::write(c_main_path, c_main)) {
-        Directories::get().open(project_path);
-        Notebook::get().open(c_main_path);
-        Directories::get().update();
-        Terminal::get().print("C project "+project_name+" created.\n");
-      }
-      else
-        Terminal::get().print("Error: Could not create project "+project_path.string()+"\n", true);
     }
   });
   menu.add_action("new_project_cpp", [this]() {
-    boost::filesystem::path project_path = Dialog::new_folder(Notebook::get().get_current_folder());
-    if(project_path!="") {
-      auto project_name=project_path.filename().string();
-      for(size_t c=0;c<project_name.size();c++) {
-        if(project_name[c]==' ')
-          project_name[c]='_';
+    if(auto notebook = Notebooks::get().get_current_notebook()) {
+      boost::filesystem::path project_path = Dialog::new_folder(notebook->get_current_folder());
+      if(!project_path.empty()) {
+        auto project_name=project_path.filename().string();
+        for(size_t c=0;c<project_name.size();c++) {
+          if(project_name[c]==' ')
+            project_name[c]='_';
+        }
+        auto cmakelists_path=project_path;
+        cmakelists_path/="CMakeLists.txt";
+        auto cpp_main_path=project_path;
+        cpp_main_path/="main.cpp";
+        if(boost::filesystem::exists(cmakelists_path)) {
+          Terminal::get().print("Error: "+cmakelists_path.string()+" already exists.\n", true);
+          return;
+        }
+        if(boost::filesystem::exists(cpp_main_path)) {
+          Terminal::get().print("Error: "+cpp_main_path.string()+" already exists.\n", true);
+          return;
+        }
+        std::string cmakelists="cmake_minimum_required(VERSION 2.8)\n\nproject("+project_name+")\n\nset(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} -std=c++1y -Wall -Wextra\")\n\nadd_executable("+project_name+" main.cpp)\n";
+        std::string cpp_main="#include <iostream>\n\nint main() {\n  std::cout << \"Hello World!\\n\";\n}\n";
+        if(filesystem::write(cmakelists_path, cmakelists) && filesystem::write(cpp_main_path, cpp_main)) {
+          Directories::get().open(project_path);
+          notebook->open(cpp_main_path);
+          Directories::get().update();
+          Terminal::get().print("C++ project "+project_name+" created.\n");
+        }
+        else
+          Terminal::get().print("Error: Could not create project "+project_path.string()+"\n", true);
       }
-      auto cmakelists_path=project_path;
-      cmakelists_path/="CMakeLists.txt";
-      auto cpp_main_path=project_path;
-      cpp_main_path/="main.cpp";
-      if(boost::filesystem::exists(cmakelists_path)) {
-        Terminal::get().print("Error: "+cmakelists_path.string()+" already exists.\n", true);
-        return;
-      }
-      if(boost::filesystem::exists(cpp_main_path)) {
-        Terminal::get().print("Error: "+cpp_main_path.string()+" already exists.\n", true);
-        return;
-      }
-      std::string cmakelists="cmake_minimum_required(VERSION 2.8)\n\nproject("+project_name+")\n\nset(CMAKE_CXX_FLAGS \"${CMAKE_CXX_FLAGS} -std=c++1y -Wall -Wextra\")\n\nadd_executable("+project_name+" main.cpp)\n";
-      std::string cpp_main="#include <iostream>\n\nint main() {\n  std::cout << \"Hello World!\\n\";\n}\n";
-      if(filesystem::write(cmakelists_path, cmakelists) && filesystem::write(cpp_main_path, cpp_main)) {
-        Directories::get().open(project_path);
-        Notebook::get().open(cpp_main_path);
-        Directories::get().update();
-        Terminal::get().print("C++ project "+project_name+" created.\n");
-      }
-      else
-        Terminal::get().print("Error: Could not create project "+project_path.string()+"\n", true);
     }
   });
   
   menu.add_action("open_file", [this]() {
-    auto folder_path=Notebook::get().get_current_folder();
-    if(auto view=Notebook::get().get_current_view()) {
-      if(!Directories::get().path.empty() && !filesystem::file_in_path(view->file_path, Directories::get().path))
-        folder_path=view->file_path.parent_path();
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      auto folder_path=notebook->get_current_folder();
+      if(auto view=notebook->get_current_view()) {
+        if(!Directories::get().path.empty() && !filesystem::file_in_path(view->file_path, Directories::get().path))
+          folder_path=view->file_path.parent_path();
+      }
+      auto path=Dialog::open_file(folder_path);
+      if(!path.empty())
+        notebook->open(path);
     }
-    auto path=Dialog::open_file(folder_path);
-    if(path!="")
-      Notebook::get().open(path);
   });
   menu.add_action("open_folder", [this]() {
-    auto path = Dialog::open_folder(Notebook::get().get_current_folder());
-    if (path!="" && boost::filesystem::exists(path))
-      Directories::get().open(path);
+    if (auto notebook=Notebooks::get().get_current_notebook()) {
+      auto path = Dialog::open_folder(notebook->get_current_folder());
+      if (!path.empty() && boost::filesystem::exists(path))
+        Directories::get().open(path);
+    }
   });
   
   menu.add_action("reload_file", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      Gtk::MessageDialog dialog(*static_cast<Gtk::Window*>(get_toplevel()), "Reload file!", false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
-      dialog.set_default_response(Gtk::RESPONSE_YES);
-      dialog.set_secondary_text("Do you want to reload: " + view->file_path.string()+" ? The current buffer will be lost.");
-      int result = dialog.run();
-      if(result==Gtk::RESPONSE_YES) {
-        if(boost::filesystem::exists(view->file_path)) {
-          std::ifstream can_read(view->file_path.string());
-          if(!can_read) {
-            Terminal::get().print("Error: could not read "+view->file_path.string()+"\n", true);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        Gtk::MessageDialog dialog(*static_cast<Gtk::Window*>(get_toplevel()), "Reload file!", false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
+        dialog.set_default_response(Gtk::RESPONSE_YES);
+        dialog.set_secondary_text("Do you want to reload: " + view->file_path.string()+" ? The current buffer will be lost.");
+        int result = dialog.run();
+        if(result==Gtk::RESPONSE_YES) {
+          if(boost::filesystem::exists(view->file_path)) {
+            std::ifstream can_read(view->file_path.string());
+            if(!can_read) {
+              Terminal::get().print("Error: could not read "+view->file_path.string()+"\n", true);
+              return;
+            }
+            can_read.close();
+          }
+          else {
+            Terminal::get().print("Error: "+view->file_path.string()+" does not exist\n", true);
             return;
           }
-          can_read.close();
+          
+          int line = view->get_buffer()->get_insert()->get_iter().get_line();
+          int offset = view->get_buffer()->get_insert()->get_iter().get_line_offset();
+          view->load();
+          while(Gtk::Main::events_pending())
+            Gtk::Main::iteration(false);
+          notebook->delete_cursor_locations(view);
+          view->place_cursor_at_line_offset(line, offset);
+          view->scroll_to_cursor_delayed(view, true, false);
+          view->get_buffer()->set_modified(false);
+          view->full_reparse();
         }
-        else {
-          Terminal::get().print("Error: "+view->file_path.string()+" does not exist\n", true);
-          return;
-        }
-        
-        int line = view->get_buffer()->get_insert()->get_iter().get_line();
-        int offset = view->get_buffer()->get_insert()->get_iter().get_line_offset();
-        view->load();
-        while(Gtk::Main::events_pending())
-          Gtk::Main::iteration(false);
-        Notebook::get().delete_cursor_locations(view);
-        view->place_cursor_at_line_offset(line, offset);
-        view->scroll_to_cursor_delayed(view, true, false);
-        view->get_buffer()->set_modified(false);
-        view->full_reparse();
       }
     }
   });
   
   menu.add_action("save", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      if(Notebook::get().save_current()) {
-        if(view->file_path==Config::get().home_juci_path/"config"/"config.json") {
-          configure();
-          for(size_t c=0;c<Notebook::get().size();c++) {
-            Notebook::get().get_view(c)->configure();
-            Notebook::get().configure(c);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        if(notebook->save_current()) {
+          if(view->file_path==Config::get().home_juci_path/"config"/"config.json") {
+            configure();
+            for(auto &nbook: Notebooks::get().get_notebooks()) {
+              for(size_t c=nbook.size()-1;c<=0;c--) {
+                nbook.get_view(c)->configure();
+                nbook.configure(c);
+              }
+            }
           }
         }
       }
     }
   });
   menu.add_action("save_as", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      auto path = Dialog::save_file_as(view->file_path);
-      if(path!="") {
-        std::ofstream file(path, std::ofstream::binary);
-        if(file) {
-          file << view->get_buffer()->get_text().raw();
-          file.close();
-          if(Directories::get().path!="")
-            Directories::get().update();
-          Notebook::get().open(path);
-          Terminal::get().print("File saved to: " + Notebook::get().get_current_view()->file_path.string()+"\n");
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        auto path = Dialog::save_file_as(view->file_path);
+        if(!path.empty()) {
+          std::ofstream file(path, std::ofstream::binary);
+          if(file) {
+            file << view->get_buffer()->get_text().raw();
+            file.close();
+            if(Directories::get().path!="")
+              Directories::get().update();
+            notebook->open(path);
+            Terminal::get().print("File saved to: " + notebook->get_current_view()->file_path.string()+"\n");
+          }
+          else
+            Terminal::get().print("Error saving file\n", true);
         }
-        else
-          Terminal::get().print("Error saving file\n", true);
       }
     }
   });
   
   menu.add_action("print", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       auto print_operation=Gtk::PrintOperation::create();
       auto print_compositor=Gsv::PrintCompositor::create(*view);
       
@@ -432,7 +467,7 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("edit_undo", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       auto undo_manager = view->get_source_buffer()->get_undo_manager();
       if (undo_manager->can_undo()) {
         view->disable_spellcheck=true;
@@ -443,7 +478,7 @@ void Window::set_menu_actions() {
     }
   });
   menu.add_action("edit_redo", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       auto undo_manager = view->get_source_buffer()->get_undo_manager();
       if(undo_manager->can_redo()) {
         view->disable_spellcheck=true;
@@ -458,7 +493,7 @@ void Window::set_menu_actions() {
     auto widget=get_focus();
     if(auto entry=dynamic_cast<Gtk::Entry*>(widget))
       entry->cut_clipboard();
-    else if(auto view=Notebook::get().get_current_view()) {
+    else if(auto view=Notebooks::get().get_current_view()) {
       view->disable_spellcheck=true;
       view->get_buffer()->cut_clipboard(Gtk::Clipboard::get());
       view->disable_spellcheck=false;
@@ -475,7 +510,7 @@ void Window::set_menu_actions() {
     auto widget=get_focus();
     if(auto entry=dynamic_cast<Gtk::Entry*>(widget))
       entry->paste_clipboard();
-    else if(auto view=Notebook::get().get_current_view()) {
+    else if(auto view=Notebooks::get().get_current_view()) {
       view->disable_spellcheck=true;
       view->paste();
       view->disable_spellcheck=false;
@@ -487,42 +522,44 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_spellcheck", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       view->remove_spellcheck_errors();
       view->spellcheck();
     }
   });
   menu.add_action("source_spellcheck_clear", [this]() {
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->remove_spellcheck_errors();
   });
   menu.add_action("source_spellcheck_next_error", [this]() {
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->goto_next_spellcheck_error();
   });
   
   menu.add_action("source_git_next_diff", [this]() {
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->git_goto_next_diff();
   });
   menu.add_action("source_git_show_diff", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      auto diff_details=view->git_get_diff_details();
-      if(diff_details.empty())
-        return;
-      std::string postfix;
-      if(diff_details.size()>2) {
-        size_t pos=diff_details.find("@@", 2);
-        if(pos!=std::string::npos)
-          postfix=diff_details.substr(0, pos+2);
-      }
-      Notebook::get().open(view->file_path.string()+postfix+".diff");
-      if(auto new_view=Notebook::get().get_current_view()) {
-        if(new_view->get_buffer()->get_text().empty()) {
-          new_view->get_source_buffer()->begin_not_undoable_action();
-          new_view->get_buffer()->set_text(diff_details);
-          new_view->get_source_buffer()->end_not_undoable_action();
-          new_view->get_buffer()->set_modified(false);
+    if (auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        auto diff_details=view->git_get_diff_details();
+        if(diff_details.empty())
+          return;
+        std::string postfix;
+        if(diff_details.size()>2) {
+          size_t pos=diff_details.find("@@", 2);
+          if(pos!=std::string::npos)
+            postfix=diff_details.substr(0, pos+2);
+        }
+        notebook->open(view->file_path.string()+postfix+".diff");
+        if(auto new_view=notebook->get_current_view()) {
+          if(new_view->get_buffer()->get_text().empty()) {
+            new_view->get_source_buffer()->begin_not_undoable_action();
+            new_view->get_buffer()->set_text(diff_details);
+            new_view->get_source_buffer()->end_not_undoable_action();
+            new_view->get_buffer()->set_modified(false);
+          }
         }
       }
     }
@@ -532,7 +569,7 @@ void Window::set_menu_actions() {
     set_tab_entry();
   });
   menu.add_action("source_indentation_auto_indent_buffer", [this]() {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     if(view && view->format_style) {
       view->disable_spellcheck=true;
       view->format_style(true);
@@ -544,54 +581,58 @@ void Window::set_menu_actions() {
     goto_line_entry();
   });
   menu.add_action("source_center_cursor", [this]() {
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->scroll_to_cursor_delayed(view, true, false);
   });
   menu.add_action("source_cursor_history_back", [this]() {
-    if(Notebook::get().cursor_locations.size()==0)
-      return;
-    if(Notebook::get().current_cursor_location==static_cast<size_t>(-1))
-      Notebook::get().current_cursor_location=Notebook::get().cursor_locations.size()-1;
-    
-    auto cursor_location=&Notebook::get().cursor_locations.at(Notebook::get().current_cursor_location);
-    // Move to current position if current position's view is not current view
-    // (in case one is looking at a new file but has not yet placed the cursor within the file)
-    if(cursor_location->view!=Notebook::get().get_current_view())
-      Notebook::get().open(cursor_location->view->file_path);
-    else {
-      if(Notebook::get().cursor_locations.size()<=1)
+    if (auto notebook=Notebooks::get().get_current_notebook()) {
+      if(notebook->cursor_locations.size()==0)
         return;
-      if(Notebook::get().current_cursor_location==0)
-        return;
+      if(notebook->current_cursor_location==static_cast<size_t>(-1))
+        notebook->current_cursor_location=notebook->cursor_locations.size()-1;
       
-      --Notebook::get().current_cursor_location;
-      cursor_location=&Notebook::get().cursor_locations.at(Notebook::get().current_cursor_location);
-      if(Notebook::get().get_current_view()!=cursor_location->view)
-        Notebook::get().open(cursor_location->view->file_path);
+      auto cursor_location=&notebook->cursor_locations.at(notebook->current_cursor_location);
+      // Move to current position if current position's view is not current view
+      // (in case one is looking at a new file but has not yet placed the cursor within the file)
+      if(cursor_location->view!=notebook->get_current_view())
+        notebook->open(cursor_location->view->file_path);
+      else {
+        if(notebook->cursor_locations.size()<=1)
+          return;
+        if(notebook->current_cursor_location==0)
+          return;
+        
+        --notebook->current_cursor_location;
+        cursor_location=&notebook->cursor_locations.at(notebook->current_cursor_location);
+        if(notebook->get_current_view()!=cursor_location->view)
+          notebook->open(cursor_location->view->file_path);
+      }
+      notebook->disable_next_update_cursor_locations=true;
+      cursor_location->view->get_buffer()->place_cursor(cursor_location->mark->get_iter());
+      cursor_location->view->scroll_to_cursor_delayed(cursor_location->view, true, false);
     }
-    Notebook::get().disable_next_update_cursor_locations=true;
-    cursor_location->view->get_buffer()->place_cursor(cursor_location->mark->get_iter());
-    cursor_location->view->scroll_to_cursor_delayed(cursor_location->view, true, false);
   });
   menu.add_action("source_cursor_history_forward", [this]() {
-    if(Notebook::get().cursor_locations.size()<=1)
-      return;
-    if(Notebook::get().current_cursor_location==static_cast<size_t>(-1))
-      Notebook::get().current_cursor_location=Notebook::get().cursor_locations.size()-1;
-    if(Notebook::get().current_cursor_location==Notebook::get().cursor_locations.size()-1)
-      return;
-    
-    ++Notebook::get().current_cursor_location;
-    auto &cursor_location=Notebook::get().cursor_locations.at(Notebook::get().current_cursor_location);
-    if(Notebook::get().get_current_view()!=cursor_location.view)
-      Notebook::get().open(cursor_location.view->file_path);
-    Notebook::get().disable_next_update_cursor_locations=true;
-    cursor_location.view->get_buffer()->place_cursor(cursor_location.mark->get_iter());
-    cursor_location.view->scroll_to_cursor_delayed(cursor_location.view, true, false);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(notebook->cursor_locations.size()<=1)
+        return;
+      if(notebook->current_cursor_location==static_cast<size_t>(-1))
+        notebook->current_cursor_location=notebook->cursor_locations.size()-1;
+      if(notebook->current_cursor_location==notebook->cursor_locations.size()-1)
+        return;
+      
+      ++notebook->current_cursor_location;
+      auto &cursor_location=notebook->cursor_locations.at(notebook->current_cursor_location);
+      if(notebook->get_current_view()!=cursor_location.view)
+        notebook->open(cursor_location.view->file_path);
+      notebook->disable_next_update_cursor_locations=true;
+      cursor_location.view->get_buffer()->place_cursor(cursor_location.mark->get_iter());
+      cursor_location.view->scroll_to_cursor_delayed(cursor_location.view, true, false);
+    }
   });
   
   menu.add_action("source_show_completion", [this] {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->non_interactive_completion)
         view->non_interactive_completion();
       else
@@ -600,7 +641,11 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_find_symbol_ctags", [this]() {
-    auto view=Notebook::get().get_current_view();
+    auto notebook=Notebooks::get().get_current_notebook();
+    if(!notebook)
+      return;
+    
+    auto view=notebook->get_current_view();
     
     boost::filesystem::path search_path;
     if(view)
@@ -646,15 +691,15 @@ void Window::set_menu_actions() {
       
     if(rows.size()==0)
       return;
-    SelectionDialog::get()->on_select=[this, rows=std::move(rows), path=std::move(path)](unsigned int index, const std::string &text, bool hide_window) {
+    SelectionDialog::get()->on_select=[this, notebook, rows=std::move(rows), path=std::move(path)](unsigned int index, const std::string &text, bool hide_window) {
       if(index>=rows.size())
         return;
       auto offset=rows[index];
       auto full_path=path/offset.file_path;
       if(!boost::filesystem::is_regular_file(full_path))
         return;
-      Notebook::get().open(full_path);
-      auto view=Notebook::get().get_current_view();
+      notebook->open(full_path);
+      auto view=notebook->get_current_view();
       view->place_cursor_at_line_index(offset.line, offset.index);
       view->scroll_to_cursor_delayed(view, true, false);
       view->hide_tooltips();
@@ -665,7 +710,7 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_find_file", [this]() {
-    auto view = Notebook::get().get_current_view();
+    auto view = Notebooks::get().get_current_view();
 
     boost::filesystem::path search_path;
     if(view)
@@ -697,8 +742,11 @@ void Window::set_menu_actions() {
       SelectionDialog::create(true, true);
     
     std::unordered_set<std::string> buffer_paths;
-    for(auto view: Notebook::get().get_views())
-      buffer_paths.emplace(view->file_path.string());
+    // TODO replace Notebook with Notebooks
+    for(auto &notebook: Notebooks::get().get_notebooks()) {
+      for(auto view: notebook.get_views())
+        buffer_paths.emplace(view->file_path.string());
+    }
     
     std::vector<boost::filesystem::path> paths;
     // populate with all files in search_path
@@ -727,9 +775,11 @@ void Window::set_menu_actions() {
     SelectionDialog::get()->on_select=[this, paths=std::move(paths)](unsigned int index, const std::string &text, bool hide_window) {
       if(index>=paths.size())
         return;
-      Notebook::get().open(paths[index]);
-      if (auto view=Notebook::get().get_current_view())
-        view->hide_tooltips();
+      if (auto notebook=Notebooks::get().get_current_notebook()) {
+        notebook->open(paths[index]);
+        if (auto view=notebook->get_current_view())
+          view->hide_tooltips();
+      }
     };
   
     if(view)
@@ -739,34 +789,36 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_comments_toggle", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->toggle_comments) {
         view->toggle_comments();
       }
     }
   });
   menu.add_action("source_comments_add_documentation", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      if(view->get_documentation_template) {
-        auto documentation_template=view->get_documentation_template();
-        auto offset=std::get<0>(documentation_template);
-        if(offset) {
-          if(!boost::filesystem::is_regular_file(offset.file_path))
-            return;
-          Notebook::get().open(offset.file_path);
-          auto view=Notebook::get().get_current_view();
-          auto iter=view->get_buffer()->get_iter_at_line_index(offset.line, offset.index);
-          view->get_buffer()->insert(iter, std::get<1>(documentation_template));
-          iter=view->get_buffer()->get_iter_at_line_index(offset.line, offset.index);
-          iter.forward_chars(std::get<2>(documentation_template));
-          view->get_buffer()->place_cursor(iter);
-          view->scroll_to_cursor_delayed(view, true, false);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        if(view->get_documentation_template) {
+          auto documentation_template=view->get_documentation_template();
+          auto offset=std::get<0>(documentation_template);
+          if(offset) {
+            if(!boost::filesystem::is_regular_file(offset.file_path))
+              return;
+            notebook->open(offset.file_path);
+            auto view=notebook->get_current_view();
+            auto iter=view->get_buffer()->get_iter_at_line_index(offset.line, offset.index);
+            view->get_buffer()->insert(iter, std::get<1>(documentation_template));
+            iter=view->get_buffer()->get_iter_at_line_index(offset.line, offset.index);
+            iter.forward_chars(std::get<2>(documentation_template));
+            view->get_buffer()->place_cursor(iter);
+            view->scroll_to_cursor_delayed(view, true, false);
+          }
         }
       }
     }
   });
   menu.add_action("source_find_documentation", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_token_data) {
         auto data=view->get_token_data();        
         if(data.size()>0) {
@@ -811,18 +863,20 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_goto_declaration", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      if(view->get_declaration_location) {
-        auto location=view->get_declaration_location();
-        if(location) {
-          if(!boost::filesystem::is_regular_file(location.file_path))
-            return;
-          Notebook::get().open(location.file_path);
-          auto view=Notebook::get().get_current_view();
-          auto line=static_cast<int>(location.line);
-          auto index=static_cast<int>(location.index);
-          view->place_cursor_at_line_index(line, index);
-          view->scroll_to_cursor_delayed(view, true, false);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        if(view->get_declaration_location) {
+          auto location=view->get_declaration_location();
+          if(location) {
+            if(!boost::filesystem::is_regular_file(location.file_path))
+              return;
+            notebook->open(location.file_path);
+            auto view=notebook->get_current_view();
+            auto line=static_cast<int>(location.line);
+            auto index=static_cast<int>(location.index);
+            view->place_cursor_at_line_index(line, index);
+            view->scroll_to_cursor_delayed(view, true, false);
+          }
         }
       }
     }
@@ -854,12 +908,14 @@ void Window::set_menu_actions() {
         auto location=*rows.begin();
         if(!boost::filesystem::is_regular_file(location.file_path))
           return;
-        Notebook::get().open(location.file_path);
-        auto view=Notebook::get().get_current_view();
-        auto line=static_cast<int>(location.line);
-        auto index=static_cast<int>(location.index);
-        view->place_cursor_at_line_index(line, index);
-        view->scroll_to_cursor_delayed(view, true, false);
+        if (auto notebook=Notebooks::get().get_current_notebook()) {
+          notebook->open(location.file_path);
+          auto view=notebook->get_current_view();
+          auto line=static_cast<int>(location.line);
+          auto index=static_cast<int>(location.index);
+          view->place_cursor_at_line_index(line, index);
+          view->scroll_to_cursor_delayed(view, true, false);
+        }
         return;
       }
       SelectionDialog::get()->on_select=[rows=std::move(rows)](unsigned int index, const std::string &text, bool hide_window) {
@@ -868,82 +924,86 @@ void Window::set_menu_actions() {
         auto location=rows[index];
         if(!boost::filesystem::is_regular_file(location.file_path))
           return;
-        Notebook::get().open(location.file_path);
-        auto view=Notebook::get().get_current_view();
-        view->place_cursor_at_line_index(location.line, location.index);
-        view->scroll_to_cursor_delayed(view, true, false);
-        view->hide_tooltips();
+        if (auto notebook=Notebooks::get().get_current_notebook()) {
+          notebook->open(location.file_path);
+          auto view=notebook->get_current_view();
+          view->place_cursor_at_line_index(location.line, location.index);
+          view->scroll_to_cursor_delayed(view, true, false);
+          view->hide_tooltips();
+        }
       };
       view->hide_tooltips();
       SelectionDialog::get()->show();
     }
   };
   menu.add_action("source_goto_implementation", [this, goto_selected_location]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_implementation_locations)
         goto_selected_location(view, view->get_implementation_locations());
     }
   });
   menu.add_action("source_goto_declaration_or_implementation", [this, goto_selected_location]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_declaration_or_implementation_locations)
         goto_selected_location(view, view->get_declaration_or_implementation_locations());
     }
   });
 
   menu.add_action("source_goto_usage", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
-      if(view->get_usages) {
-        auto usages=view->get_usages();
-        if(!usages.empty()) {
-          auto dialog_iter=view->get_iter_for_dialog();
-          SelectionDialog::create(view, view->get_buffer()->create_mark(dialog_iter), true, true);
-          std::vector<Source::Offset> rows;
-          
-          auto iter=view->get_buffer()->get_insert()->get_iter();
-          for(auto &usage: usages) {
-            std::string row;
-            bool current_page=true;
-            //add file name if usage is not in current page
-            if(view->file_path!=usage.first.file_path) {
-              row=usage.first.file_path.filename().string()+":";
-              current_page=false;
-            }
-            row+=std::to_string(usage.first.line+1)+": "+usage.second;
-            rows.emplace_back(usage.first);
-            SelectionDialog::get()->add_row(row);
+    if(auto notebook=Notebooks::get().get_current_notebook()) {
+      if(auto view=notebook->get_current_view()) {
+        if(view->get_usages) {
+          auto usages=view->get_usages();
+          if(!usages.empty()) {
+            auto dialog_iter=view->get_iter_for_dialog();
+            SelectionDialog::create(view, view->get_buffer()->create_mark(dialog_iter), true, true);
+            std::vector<Source::Offset> rows;
             
-            //Set dialog cursor to the last row if the textview cursor is at the same line
-            if(current_page &&
-               iter.get_line()==static_cast<int>(usage.first.line) && iter.get_line_index()>=static_cast<int>(usage.first.index)) {
-              SelectionDialog::get()->set_cursor_at_last_row();
+            auto iter=view->get_buffer()->get_insert()->get_iter();
+            for(auto &usage: usages) {
+              std::string row;
+              bool current_page=true;
+              //add file name if usage is not in current page
+              if(view->file_path!=usage.first.file_path) {
+                row=usage.first.file_path.filename().string()+":";
+                current_page=false;
+              }
+              row+=std::to_string(usage.first.line+1)+": "+usage.second;
+              rows.emplace_back(usage.first);
+              SelectionDialog::get()->add_row(row);
+              
+              //Set dialog cursor to the last row if the textview cursor is at the same line
+              if(current_page &&
+                 iter.get_line()==static_cast<int>(usage.first.line) && iter.get_line_index()>=static_cast<int>(usage.first.index)) {
+                SelectionDialog::get()->set_cursor_at_last_row();
+              }
             }
-          }
-          
-          if(rows.size()==0)
-            return;
-          SelectionDialog::get()->on_select=[this, rows=std::move(rows)](unsigned int index, const std::string &text, bool hide_window) {
-            if(index>=rows.size())
+            
+            if(rows.size()==0)
               return;
-            auto offset=rows[index];
-            if(!boost::filesystem::is_regular_file(offset.file_path))
-              return;
-            Notebook::get().open(offset.file_path);
-            auto view=Notebook::get().get_current_view();
-            view->place_cursor_at_line_index(offset.line, offset.index);
-            view->scroll_to_cursor_delayed(view, true, false);
+            SelectionDialog::get()->on_select=[this, notebook, rows=std::move(rows)](unsigned int index, const std::string &text, bool hide_window) {
+              if(index>=rows.size())
+                return;
+              auto offset=rows[index];
+              if(!boost::filesystem::is_regular_file(offset.file_path))
+                return;
+              notebook->open(offset.file_path);
+              auto view=notebook->get_current_view();
+              view->place_cursor_at_line_index(offset.line, offset.index);
+              view->scroll_to_cursor_delayed(view, true, false);
+              view->hide_tooltips();
+            };
             view->hide_tooltips();
-          };
-          view->hide_tooltips();
-          SelectionDialog::get()->show();
+            SelectionDialog::get()->show();
+          }
         }
       }
     }
   });
   menu.add_action("source_goto_method", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_methods) {
-        auto methods=Notebook::get().get_current_view()->get_methods();
+        auto methods=Notebooks::get().get_current_view()->get_methods();
         if(!methods.empty()) {
           auto dialog_iter=view->get_iter_for_dialog();
           SelectionDialog::create(view, view->get_buffer()->create_mark(dialog_iter), true, true);
@@ -975,7 +1035,7 @@ void Window::set_menu_actions() {
   menu.add_action("source_implement_method", [this]() {
     const static std::string button_text="Insert Method Implementation";
     
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_method) {
         auto iter=view->get_buffer()->get_insert()->get_iter();
         if(!EntryBox::get().buttons.empty() && EntryBox::get().buttons.back().get_label()==button_text &&
@@ -991,7 +1051,7 @@ void Window::set_menu_actions() {
         EntryBox::get().labels.emplace_back();
         EntryBox::get().labels.back().set_text(method);
         EntryBox::get().buttons.emplace_back(button_text, [this, method=std::move(method)](){
-          if(auto view=Notebook::get().get_current_view()) {
+          if(auto view=Notebooks::get().get_current_view()) {
             view->get_buffer()->insert_at_cursor(method);
             EntryBox::get().clear();
           }
@@ -1002,14 +1062,14 @@ void Window::set_menu_actions() {
   });
   
   menu.add_action("source_goto_next_diagnostic", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->goto_next_diagnostic) {
         view->goto_next_diagnostic();
       }
     }
   });
   menu.add_action("source_apply_fix_its", [this]() {
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->get_fix_its) {
         auto buffer=view->get_buffer();
         auto fix_its=view->get_fix_its();
@@ -1115,7 +1175,7 @@ void Window::set_menu_actions() {
     EntryBox::get().entries.emplace_back(last_run_command, [this](const std::string& content){
       if(content!="") {
         last_run_command=content;
-        auto run_path=Notebook::get().get_current_folder();
+        auto run_path=Notebooks::get().get_current_folder();
         Terminal::get().async_print("Running: "+content+'\n');
   
         Terminal::get().async_process(content, run_path, [this, content](int exit_status){
@@ -1238,7 +1298,7 @@ void Window::set_menu_actions() {
     EntryBox::get().show();
   });
   menu.add_action("debug_toggle_breakpoint", [this](){
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       if(view->toggle_breakpoint)
         view->toggle_breakpoint(view->get_buffer()->get_insert()->get_iter().get_line());
     }
@@ -1246,12 +1306,14 @@ void Window::set_menu_actions() {
   menu.add_action("debug_goto_stop", [this](){
     if(Project::debugging) {
       if(!Project::debug_stop.first.empty()) {
-        Notebook::get().open(Project::debug_stop.first);
-        if(auto view=Notebook::get().get_current_view()) {
-          int line=Project::debug_stop.second.first;
-          int index=Project::debug_stop.second.second;
-          view->place_cursor_at_line_index(line, index);
-          view->scroll_to_cursor_delayed(view, true, true);
+        if(auto notebook=Notebooks::get().get_current_notebook()) {
+          notebook->open(Project::debug_stop.first);
+          if(auto view=notebook->get_current_view()) {
+            int line=Project::debug_stop.second.first;
+            int index=Project::debug_stop.second.second;
+            view->place_cursor_at_line_index(line, index);
+            view->scroll_to_cursor_delayed(view, true, true);
+          }
         }
       }
     }
@@ -1261,17 +1323,17 @@ void Window::set_menu_actions() {
 #endif
   
   menu.add_action("next_tab", [this]() {
-    Notebook::get().next();
+    Notebooks::get().next();
   });
   menu.add_action("previous_tab", [this]() {
-    Notebook::get().previous();
+    Notebooks::get().previous();
   });
   menu.add_action("close_tab", [this]() {
-    if(Notebook::get().get_current_view())
-      Notebook::get().close_current();
+    if(Notebooks::get().get_current_view())
+      Notebooks::get().close_current();
   });
   menu.add_action("window_toggle_split", [this] {
-    Notebook::get().toggle_split();
+    Notebooks::get().toggle_split();
   });
   menu.add_action("window_add_notebook", [this] {
     notebookWindows.emplace_back();
@@ -1283,7 +1345,7 @@ void Window::set_menu_actions() {
       fullscreen();
   });
   menu.add_action("window_toggle_tabs", [this] {
-    Notebook::get().toggle_tabs();
+    Notebooks::get().toggle_tabs();
   });
   menu.add_action("window_clear_terminal", [this] {
     Terminal::get().clear();
@@ -1292,7 +1354,7 @@ void Window::set_menu_actions() {
 
 void Window::activate_menu_items() {
   auto &menu = Menu::get();
-  auto view=Notebook::get().get_current_view();
+  auto view=Notebooks::get().get_current_view();
   
   menu.actions["reload_file"]->set_enabled(view);
   menu.actions["source_spellcheck"]->set_enabled(view);
@@ -1362,11 +1424,12 @@ bool Window::on_key_press_event(GdkEventKey *event) {
 }
 
 bool Window::on_delete_event(GdkEventAny *event) {
-  Notebook::get().save_session();
-  
-  for(size_t c=Notebook::get().size()-1;c!=static_cast<size_t>(-1);--c) {
-    if(!Notebook::get().close(c))
-      return true;
+  Notebooks::get().save_session();
+  for(auto &notebook: Notebooks::get().get_notebooks()) {
+    for(size_t c=notebook.size()-1;c!=static_cast<size_t>(-1);--c) {
+      if(!notebook.close(c))
+        return true;
+    }
   }
   Terminal::get().kill_async_processes();
 #ifdef JUCI_ENABLE_DEBUG
@@ -1396,12 +1459,12 @@ void Window::search_and_replace_entry() {
     }
   };
   EntryBox::get().entries.emplace_back(last_search, [this](const std::string& content){
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->search_forward();
   });
   auto search_entry_it=EntryBox::get().entries.begin();
   search_entry_it->set_placeholder_text("Find");
-  if(auto view=Notebook::get().get_current_view()) {
+  if(auto view=Notebooks::get().get_current_view()) {
     view->update_search_occurrences=[label_it](int number){
       label_it->update(0, std::to_string(number));
     };
@@ -1409,19 +1472,19 @@ void Window::search_and_replace_entry() {
   }
   search_entry_it->signal_key_press_event().connect([this](GdkEventKey* event){
     if((event->keyval==GDK_KEY_Return || event->keyval==GDK_KEY_KP_Enter) && (event->state&GDK_SHIFT_MASK)>0) {
-      if(auto view=Notebook::get().get_current_view())
+      if(auto view=Notebooks::get().get_current_view())
         view->search_backward();
     }
     return false;
   });
   search_entry_it->signal_changed().connect([this, search_entry_it](){
     last_search=search_entry_it->get_text();
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->search_highlight(search_entry_it->get_text(), case_sensitive_search, regex_search);
   });
 
   EntryBox::get().entries.emplace_back(last_replace, [this](const std::string &content){
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->replace_forward(content);
   });
   auto replace_entry_it=EntryBox::get().entries.begin();
@@ -1429,7 +1492,7 @@ void Window::search_and_replace_entry() {
   replace_entry_it->set_placeholder_text("Replace");
   replace_entry_it->signal_key_press_event().connect([this, replace_entry_it](GdkEventKey* event){
     if((event->keyval==GDK_KEY_Return || event->keyval==GDK_KEY_KP_Enter) && (event->state&GDK_SHIFT_MASK)>0) {
-      if(auto view=Notebook::get().get_current_view())
+      if(auto view=Notebooks::get().get_current_view())
         view->replace_backward(replace_entry_it->get_text());
     }
     return false;
@@ -1439,23 +1502,23 @@ void Window::search_and_replace_entry() {
   });
   
   EntryBox::get().buttons.emplace_back("↑", [this](){
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
         view->search_backward();
   });
   EntryBox::get().buttons.back().set_tooltip_text("Find Previous\n\nShortcut: Shift+Enter in the Find entry field");
   EntryBox::get().buttons.emplace_back("⇄", [this, replace_entry_it](){
-    if(auto view=Notebook::get().get_current_view()) {
+    if(auto view=Notebooks::get().get_current_view()) {
       view->replace_forward(replace_entry_it->get_text());
     }
   });
   EntryBox::get().buttons.back().set_tooltip_text("Replace Next\n\nShortcut: Enter in the Replace entry field");
   EntryBox::get().buttons.emplace_back("↓", [this](){
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->search_forward();
   });
   EntryBox::get().buttons.back().set_tooltip_text("Find Next\n\nShortcut: Enter in the Find entry field");
   EntryBox::get().buttons.emplace_back("Replace All", [this, replace_entry_it](){
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->replace_all(replace_entry_it->get_text());
   });
   EntryBox::get().buttons.back().set_tooltip_text("Replace All");
@@ -1465,7 +1528,7 @@ void Window::search_and_replace_entry() {
   EntryBox::get().toggle_buttons.back().set_active(case_sensitive_search);
   EntryBox::get().toggle_buttons.back().on_activate=[this, search_entry_it](){
     case_sensitive_search=!case_sensitive_search;
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->search_highlight(search_entry_it->get_text(), case_sensitive_search, regex_search);
   };
   EntryBox::get().toggle_buttons.emplace_back(".*");
@@ -1473,13 +1536,15 @@ void Window::search_and_replace_entry() {
   EntryBox::get().toggle_buttons.back().set_active(regex_search);
   EntryBox::get().toggle_buttons.back().on_activate=[this, search_entry_it](){
     regex_search=!regex_search;
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=Notebooks::get().get_current_view())
       view->search_highlight(search_entry_it->get_text(), case_sensitive_search, regex_search);
   };
   EntryBox::get().signal_hide().connect([this]() {
-    for(size_t c=0;c<Notebook::get().size();c++) {
-      Notebook::get().get_view(c)->update_search_occurrences=nullptr;
-      Notebook::get().get_view(c)->search_highlight("", case_sensitive_search, regex_search);
+    for(auto &notebook: Notebooks::get().get_notebooks()) {
+      for(auto view: notebook.get_views()) {
+        view->update_search_occurrences=nullptr;
+        view->search_highlight("", case_sensitive_search, regex_search);
+      }
     }
     search_entry_shown=false;
   });
@@ -1489,7 +1554,7 @@ void Window::search_and_replace_entry() {
 
 void Window::set_tab_entry() {
   EntryBox::get().clear();
-  if(auto view=Notebook::get().get_current_view()) {
+  if(auto view=Notebooks::get().get_current_view()) {
     auto tab_char_and_size=view->get_tab_char_and_size();
     
     EntryBox::get().labels.emplace_back();
@@ -1511,7 +1576,7 @@ void Window::set_tab_entry() {
     entry_tab_char_it->set_placeholder_text("Tab char");
     
     const auto activate_function=[this, entry_tab_char_it, entry_tab_size_it, label_it](const std::string& content){
-      if(auto view=Notebook::get().get_current_view()) {
+      if(auto view=Notebooks::get().get_current_view()) {
         char tab_char=0;
         unsigned tab_size=0;
         try {
@@ -1548,9 +1613,9 @@ void Window::set_tab_entry() {
 
 void Window::goto_line_entry() {
   EntryBox::get().clear();
-  if(Notebook::get().get_current_view()) {
+  if(Notebooks::get().get_current_view()) {
     EntryBox::get().entries.emplace_back("", [this](const std::string& content){
-      if(auto view=Notebook::get().get_current_view()) {
+      if(auto view=Notebooks::get().get_current_view()) {
         try {
           view->place_cursor_at_line_index(stoi(content)-1, 0);
           view->scroll_to_cursor_delayed(view, true, false);
@@ -1570,14 +1635,14 @@ void Window::goto_line_entry() {
 
 void Window::rename_token_entry() {
   EntryBox::get().clear();
-  if(auto view=Notebook::get().get_current_view()) {
+  if(auto view=Notebooks::get().get_current_view()) {
     if(view->get_token_spelling && view->rename_similar_tokens) {
       auto spelling=std::make_shared<std::string>(view->get_token_spelling());
       if(!spelling->empty()) {
         EntryBox::get().entries.emplace_back(*spelling, [this, view, spelling, iter=view->get_buffer()->get_insert()->get_iter()](const std::string& content){
           //TODO: gtk needs a way to check if iter is valid without dumping g_error message
           //iter->get_buffer() will print such a message, but no segfault will occur
-          if(Notebook::get().get_current_view()==view && content!=*spelling && iter.get_buffer() && view->get_buffer()->get_insert()->get_iter()==iter)
+          if(Notebooks::get().get_current_view()==view && content!=*spelling && iter.get_buffer() && view->get_buffer()->get_insert()->get_iter()==iter)
             view->rename_similar_tokens(content);
           else
             Info::get().print("Operation canceled");

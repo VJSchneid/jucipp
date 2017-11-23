@@ -10,8 +10,9 @@ set(project_files
     entrybox.cc
     info.cc
     juci.cc
-    notebook.cc
     notebook_window.cc
+    notebook_paned.cc
+    notebooks.cc
     project.cc
     selection_dialog.cc
     tooltips.cc

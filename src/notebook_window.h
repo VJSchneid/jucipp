@@ -2,14 +2,13 @@
 #define JUCI_NOTEBOOK_WINDOW_H
 
 #include <gtkmm.h>
-#include "notebook.h"
+#include "notebooks.h"
 
 class NotebookWindow: public Gtk::Window {
 public:
     NotebookWindow();
     
 private:
-    Notebook notebook;
     
 };
 

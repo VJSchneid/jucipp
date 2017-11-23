@@ -2,7 +2,7 @@
 #include "config.h"
 #include "project.h"
 #include "info.h"
-#include "notebook.h"
+#include "notebooks.h"
 #include "filesystem.h"
 #include <iostream>
 
@@ -430,16 +430,18 @@ bool Terminal::on_button_press_event(GdkEventButton* button_event) {
             return Gtk::TextView::on_button_press_event(button_event);
         }
         if(boost::filesystem::is_regular_file(path)) {
-          Notebook::get().open(path);
-          if(auto view=Notebook::get().get_current_view()) {
-            try {
-              int line_int = std::stoi(line)-1;
-              int index_int = std::stoi(index)-1;
-              view->place_cursor_at_line_index(line_int, index_int);
-              view->scroll_to_cursor_delayed(view, true, true);
-              return true;
+          if(auto notebook=Notebooks::get().get_current_notebook()) {
+            notebook->open(path);
+            if(auto view=notebook->get_current_view()) {
+              try {
+                int line_int = std::stoi(line)-1;
+                int index_int = std::stoi(index)-1;
+                view->place_cursor_at_line_index(line_int, index_int);
+                view->scroll_to_cursor_delayed(view, true, true);
+                return true;
+              }
+              catch(...) {}
             }
-            catch(...) {}
           }
         }
       }

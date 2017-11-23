@@ -92,13 +92,15 @@ void Application::on_activate() {
   }
   
   for(auto &file: files)
-    Notebook::get().open(file.first, file.second);
+    if(auto notebook=Notebooks::get().get_current_notebook())
+      notebook->open(file.first, file.second);
   
   for(auto &error: errors)
     Terminal::get().print(error, true);
   
   if(!last_current_file.empty())
-    Notebook::get().open(last_current_file);
+    if(auto notebook=Notebooks::get().get_current_notebook())
+      notebook->open(last_current_file);
 }
 
 void Application::on_startup() {

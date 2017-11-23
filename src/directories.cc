@@ -2,7 +2,7 @@
 #include <algorithm>
 #include "source.h"
 #include "terminal.h"
-#include "notebook.h"
+#include "notebooks.h"
 #include "filesystem.h"
 #include "entrybox.h"
 
@@ -79,22 +79,23 @@ bool Directories::TreeStore::drag_data_received_vfunc(const TreeModel::Path &pat
       return false;
     }
     
-    for(size_t c=0;c<Notebook::get().size();c++) {
-      auto view=Notebook::get().get_view(c);
-      if(is_directory) {
-        if(filesystem::file_in_path(view->file_path, source_path)) {
-          auto file_it=view->file_path.begin();
-          for(auto source_it=source_path.begin();source_it!=source_path.end();source_it++)
-            file_it++;
-          auto new_file_path=target_path;
-          for(;file_it!=view->file_path.end();file_it++)
-            new_file_path/=*file_it;
-          view->rename(new_file_path);
+    for(auto &notebook: Notebooks::get().get_notebooks()) {
+      for(auto view: notebook.get_views()) {
+        if(is_directory) {
+          if(filesystem::file_in_path(view->file_path, source_path)) {
+            auto file_it=view->file_path.begin();
+            for(auto source_it=source_path.begin();source_it!=source_path.end();source_it++)
+              file_it++;
+            auto new_file_path=target_path;
+            for(;file_it!=view->file_path.end();file_it++)
+              new_file_path/=*file_it;
+            view->rename(new_file_path);
+          }
         }
-      }
-      else if(view->file_path==source_path) {
-        view->rename(target_path);
-        break;
+        else if(view->file_path==source_path) {
+          view->rename(target_path);
+          break;
+        }
       }
     }
     
@@ -137,11 +138,12 @@ Directories::Directories() : Gtk::ListViewText(1) {
     auto iter = tree_store->get_iter(path);
     if (iter) {
       auto filesystem_path=iter->get_value(column_record.path);
-      if(filesystem_path!="") {
+      if(!filesystem_path.empty()) {
         if (boost::filesystem::is_directory(boost::filesystem::path(filesystem_path)))
           row_expanded(path) ? collapse_row(path) : expand_row(path, false);
         else
-          Notebook::get().open(filesystem_path);
+          if(auto notebook=Notebooks::get().get_current_notebook())
+            notebook->open(filesystem_path);
       }
     }
   });
@@ -169,7 +171,8 @@ Directories::Directories() : Gtk::ListViewText(1) {
       if(!boost::filesystem::exists(target_path)) {
         if(filesystem::write(target_path, "")) {
           update();
-          Notebook::get().open(target_path);
+          if(auto notebook=Notebooks::get().get_current_notebook())
+            notebook->open(target_path);
           on_save_file(target_path);
         }
         else {
@@ -273,31 +276,32 @@ Directories::Directories() : Gtk::ListViewText(1) {
       on_save_file(target_path);
       select(target_path);
       
-      for(size_t c=0;c<Notebook::get().size();c++) {
-        auto view=Notebook::get().get_view(c);
-        if(is_directory) {
-          if(filesystem::file_in_path(view->file_path, source_path)) {
-            auto file_it=view->file_path.begin();
-            for(auto source_it=source_path.begin();source_it!=source_path.end();source_it++)
-              file_it++;
-            auto new_file_path=target_path;
-            for(;file_it!=view->file_path.end();file_it++)
-              new_file_path/=*file_it;
-            view->rename(new_file_path);
+      for(auto &notebook: Notebooks::get().get_notebooks()) {
+        for(auto &view: notebook.get_views()) {
+          if(is_directory) {
+            if(filesystem::file_in_path(view->file_path, source_path)) {
+              auto file_it=view->file_path.begin();
+              for(auto source_it=source_path.begin();source_it!=source_path.end();source_it++)
+                file_it++;
+              auto new_file_path=target_path;
+              for(;file_it!=view->file_path.end();file_it++)
+                new_file_path/=*file_it;
+              view->rename(new_file_path);
+            }
           }
-        }
-        else if(view->file_path==source_path) {
-          view->rename(target_path);
-          
-          std::string old_language_id;
-          if(view->language)
-            old_language_id=view->language->get_id();
-          view->language=Source::guess_language(target_path);
-          std::string new_language_id;
-          if(view->language)
-            new_language_id=view->language->get_id();
-          if(new_language_id!=old_language_id)
-            Terminal::get().print("Warning: language for "+target_path.string()+" has changed. Please reopen the file\n");
+          else if(view->file_path==source_path) {
+            view->rename(target_path);
+            
+            std::string old_language_id;
+            if(view->language)
+              old_language_id=view->language->get_id();
+            view->language=Source::guess_language(target_path);
+            std::string new_language_id;
+            if(view->language)
+              new_language_id=view->language->get_id();
+            if(new_language_id!=old_language_id)
+              Terminal::get().print("Warning: language for "+target_path.string()+" has changed. Please reopen the file\n");
+          }
         }
       }
       
@@ -330,15 +334,16 @@ Directories::Directories() : Gtk::ListViewText(1) {
       else {
         update();
         
-        for(size_t c=0;c<Notebook::get().size();c++) {
-          auto view=Notebook::get().get_view(c);
+        for(auto &notebook: Notebooks::get().get_notebooks()) {
+          for(auto &view: notebook.get_views()) {
           
-          if(is_directory) {
-            if(filesystem::file_in_path(view->file_path, menu_popup_row_path))
+            if(is_directory) {
+              if(filesystem::file_in_path(view->file_path, menu_popup_row_path))
+                view->get_buffer()->set_modified();
+            }
+            else if(view->file_path==menu_popup_row_path)
               view->get_buffer()->set_modified();
           }
-          else if(view->file_path==menu_popup_row_path)
-            view->get_buffer()->set_modified();
         }
       }
     }

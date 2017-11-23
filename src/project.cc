@@ -5,7 +5,7 @@
 #include "directories.h"
 #include <fstream>
 #include "menu.h"
-#include "notebook.h"
+#include "notebooks.h"
 #include "selection_dialog.h"
 #ifdef JUCI_ENABLE_DEBUG
 #include "debug_lldb.h"
@@ -31,47 +31,51 @@ Gtk::Label &Project::debug_status_label() {
 }
 
 void Project::save_files(const boost::filesystem::path &path) {
-  for(size_t c=0;c<Notebook::get().size();c++) {
-    auto view=Notebook::get().get_view(c);
-    if(view->get_buffer()->get_modified()) {
-      if(filesystem::file_in_path(view->file_path, path))
-        Notebook::get().save(c);
+  for(auto &notebook: Notebooks::get().get_notebooks()) {
+    for(size_t c=0;c<notebook.size();c++) {
+      auto view=notebook.get_view(c);
+      if(view->get_buffer()->get_modified()) {
+        if(filesystem::file_in_path(view->file_path, path))
+          notebook.save(c);
+      }
     }
   }
 }
 
 void Project::on_save(size_t index) {
-  auto view=Notebook::get().get_view(index);
-  if(!view)
-    return;
-  boost::filesystem::path build_path;
-  if(view->language && view->language->get_id()=="cmake") {
-    if(view->file_path.filename()=="CMakeLists.txt")
-      build_path=view->file_path;
-    else
-      build_path=filesystem::find_file_in_path_parents("CMakeLists.txt", view->file_path.parent_path());
-  }
-  else if(view->language && view->language->get_id()=="meson") {
-    if(view->file_path.filename()=="meson.build")
-      build_path=view->file_path;
-    else
-      build_path=filesystem::find_file_in_path_parents("meson.build", view->file_path.parent_path());
-  }
-  
-  if(!build_path.empty()) {
-    auto build=Build::create(build_path);
-    if(dynamic_cast<CMakeBuild*>(build.get()) || dynamic_cast<MesonBuild*>(build.get())) {
-      build->update_default(true);
-      Usages::Clang::erase_all_caches_for_project(build->project_path, build->get_default_path());
-      boost::system::error_code ec;
-      if(boost::filesystem::exists(build->get_debug_path()), ec)
-        build->update_debug(true);
-      
-      for(size_t c=0;c<Notebook::get().size();c++) {
-        auto source_view=Notebook::get().get_view(c);
-        if(auto source_clang_view=dynamic_cast<Source::ClangView*>(source_view)) {
-          if(filesystem::file_in_path(source_clang_view->file_path, build->project_path))
-            source_clang_view->full_reparse_needed=true;
+  if(auto notebook=Notebooks::get().get_current_notebook()) {
+    auto view=notebook->get_view(index);
+    if(!view)
+      return;
+    boost::filesystem::path build_path;
+    if(view->language && view->language->get_id()=="cmake") {
+      if(view->file_path.filename()=="CMakeLists.txt")
+        build_path=view->file_path;
+      else
+        build_path=filesystem::find_file_in_path_parents("CMakeLists.txt", view->file_path.parent_path());
+    }
+    else if(view->language && view->language->get_id()=="meson") {
+      if(view->file_path.filename()=="meson.build")
+        build_path=view->file_path;
+      else
+        build_path=filesystem::find_file_in_path_parents("meson.build", view->file_path.parent_path());
+    }
+    
+    if(!build_path.empty()) {
+      auto build=Build::create(build_path);
+      if(dynamic_cast<CMakeBuild*>(build.get()) || dynamic_cast<MesonBuild*>(build.get())) {
+        build->update_default(true);
+        Usages::Clang::erase_all_caches_for_project(build->project_path, build->get_default_path());
+        boost::system::error_code ec;
+        if(boost::filesystem::exists(build->get_debug_path()), ec)
+          build->update_debug(true);
+        
+        for(size_t c=0;c<notebook->size();c++) {
+          auto source_view=notebook->get_view(c);
+          if(auto source_clang_view=dynamic_cast<Source::ClangView*>(source_view)) {
+            if(filesystem::file_in_path(source_clang_view->file_path, build->project_path))
+              source_clang_view->full_reparse_needed=true;
+          }
         }
       }
     }
@@ -89,7 +93,7 @@ void Project::debug_update_status(const std::string &new_debug_status) {
 
 void Project::debug_activate_menu_items() {
   auto &menu=Menu::get();
-  auto view=Notebook::get().get_current_view();
+  auto view=Notebooks::get().get_current_view();
   menu.actions["debug_stop"]->set_enabled(!debug_status.empty());
   menu.actions["debug_kill"]->set_enabled(!debug_status.empty());
   menu.actions["debug_step_over"]->set_enabled(!debug_status.empty());
@@ -104,28 +108,30 @@ void Project::debug_activate_menu_items() {
 
 void Project::debug_update_stop() {
   if(!debug_last_stop_file_path.empty()) {
-    for(size_t c=0;c<Notebook::get().size();c++) {
-      auto view=Notebook::get().get_view(c);
-      if(view->file_path==debug_last_stop_file_path) {
-        view->get_source_buffer()->remove_source_marks(view->get_buffer()->begin(), view->get_buffer()->end(), "debug_stop");
-        view->get_source_buffer()->remove_source_marks(view->get_buffer()->begin(), view->get_buffer()->end(), "debug_breakpoint_and_stop");
-        break;
+    for(auto &notebook: Notebooks::get().get_notebooks()) {
+      for(auto view: notebook.get_views()) {
+        if(view->file_path==debug_last_stop_file_path) {
+          view->get_source_buffer()->remove_source_marks(view->get_buffer()->begin(), view->get_buffer()->end(), "debug_stop");
+          view->get_source_buffer()->remove_source_marks(view->get_buffer()->begin(), view->get_buffer()->end(), "debug_breakpoint_and_stop");
+          break;
+        }
       }
     }
   }
   //Add debug stop source mark
   debug_last_stop_file_path.clear();
-  for(size_t c=0;c<Notebook::get().size();c++) {
-    auto view=Notebook::get().get_view(c);
-    if(view->file_path==debug_stop.first) {
-      if(debug_stop.second.first<view->get_buffer()->get_line_count()) {
-        auto iter=view->get_buffer()->get_iter_at_line(debug_stop.second.first);
-        view->get_source_buffer()->create_source_mark("debug_stop", iter);
-        if(view->get_source_buffer()->get_source_marks_at_iter(iter, "debug_breakpoint").size()>0)
-          view->get_source_buffer()->create_source_mark("debug_breakpoint_and_stop", iter);
-        debug_last_stop_file_path=debug_stop.first;
+  for(auto &notebook: Notebooks::get().get_notebooks()) {
+    for(auto view: notebook.get_views()) {
+      if(view->file_path==debug_stop.first) {
+        if(debug_stop.second.first<view->get_buffer()->get_line_count()) {
+          auto iter=view->get_buffer()->get_iter_at_line(debug_stop.second.first);
+          view->get_source_buffer()->create_source_mark("debug_stop", iter);
+          if(view->get_source_buffer()->get_source_marks_at_iter(iter, "debug_breakpoint").size()>0)
+            view->get_source_buffer()->create_source_mark("debug_breakpoint_and_stop", iter);
+          debug_last_stop_file_path=debug_stop.first;
+        }
+        break;
       }
-      break;
     }
   }
 }
@@ -133,7 +139,7 @@ void Project::debug_update_stop() {
 std::unique_ptr<Project::Base> Project::create() {
   std::unique_ptr<Project::Build> build;
   
-  if(auto view=Notebook::get().get_current_view()) {
+  if(auto view=Notebooks::get().get_current_view()) {
     build=Build::create(view->file_path);
     if(view->language) {
       auto language_id=view->language->get_id();
@@ -222,7 +228,7 @@ std::pair<std::string, std::string> Project::Clang::get_run_arguments() {
     arguments=run_arguments_it->second;
   
   if(arguments.empty()) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     auto executable=build->get_executable(view?view->file_path:Directories::get().path);
     
     if(!executable.empty())
@@ -267,7 +273,7 @@ void Project::Clang::compile_and_run() {
     arguments=run_arguments_it->second;
   
   if(arguments.empty()) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     auto executable=build->get_executable(view?view->file_path:Directories::get().path);
     if(executable.empty()) {
       Terminal::get().print("Warning: could not find executable.\n");
@@ -309,29 +315,31 @@ void Project::Clang::recreate_build() {
   bool has_debug_build=!debug_build_path.empty() && boost::filesystem::exists(debug_build_path);
   
   if(has_default_build || has_debug_build) {
-    Gtk::MessageDialog dialog(*static_cast<Gtk::Window*>(Notebook::get().get_toplevel()), "Recreate Build", false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
-    dialog.set_default_response(Gtk::RESPONSE_NO);
-    std::string message="Are you sure you want to recreate ";
-    if(has_default_build)
-      message+=default_build_path.string();
-    if(has_debug_build) {
+    if (auto notebook=Notebooks::get().get_current_notebook()) {
+      Gtk::MessageDialog dialog(*static_cast<Gtk::Window*>(notebook->get_toplevel()), "Recreate Build", false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
+      dialog.set_default_response(Gtk::RESPONSE_NO);
+      std::string message="Are you sure you want to recreate ";
       if(has_default_build)
-        message+=" and ";
-      message+=debug_build_path.string();
-    }
-    dialog.set_secondary_text(message+"?");
-    if(dialog.run()!=Gtk::RESPONSE_YES)
-      return;
-    Usages::Clang::erase_all_caches_for_project(build->project_path, default_build_path);
-    try {
-      if(has_default_build)
-        boost::filesystem::remove_all(default_build_path);
-      if(has_debug_build)
-        boost::filesystem::remove_all(debug_build_path);
-    }
-    catch(const std::exception &e) {
-      Terminal::get().print(std::string("Error: could not remove build: ")+e.what()+"\n", true);
-      return;
+        message+=default_build_path.string();
+      if(has_debug_build) {
+        if(has_default_build)
+          message+=" and ";
+        message+=debug_build_path.string();
+      }
+      dialog.set_secondary_text(message+"?");
+      if(dialog.run()!=Gtk::RESPONSE_YES)
+        return;
+      Usages::Clang::erase_all_caches_for_project(build->project_path, default_build_path);
+      try {
+        if(has_default_build)
+          boost::filesystem::remove_all(default_build_path);
+        if(has_debug_build)
+          boost::filesystem::remove_all(debug_build_path);
+      }
+      catch(const std::exception &e) {
+        Terminal::get().print(std::string("Error: could not remove build: ")+e.what()+"\n", true);
+        return;
+      }
     }
   }
   
@@ -339,15 +347,16 @@ void Project::Clang::recreate_build() {
   if(has_debug_build)
     build->update_debug(true);
   
-  for(size_t c=0;c<Notebook::get().size();c++) {
-    auto source_view=Notebook::get().get_view(c);
-    if(auto source_clang_view=dynamic_cast<Source::ClangView*>(source_view)) {
-      if(filesystem::file_in_path(source_clang_view->file_path, build->project_path))
-        source_clang_view->full_reparse_needed=true;
+  for(auto &notebook: Notebooks::get().get_notebooks()) {
+    for(auto view: notebook.get_views()) {
+      if(auto source_clang_view=dynamic_cast<Source::ClangView*>(view)) {
+        if(filesystem::file_in_path(source_clang_view->file_path, build->project_path))
+          source_clang_view->full_reparse_needed=true;
+      }
     }
   }
   
-  if(auto view=Notebook::get().get_current_view()) {
+  if(auto view=Notebooks::get().get_current_view()) {
     if(view->full_reparse_needed)
       view->full_reparse();
   }
@@ -367,7 +376,7 @@ std::pair<std::string, std::string> Project::Clang::debug_get_run_arguments() {
     arguments=run_arguments_it->second;
   
   if(arguments.empty()) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     auto executable=build->get_executable(view?view->file_path:Directories::get().path).string();
     
     if(!executable.empty()) {
@@ -403,7 +412,7 @@ void Project::Clang::debug_start() {
     *run_arguments=run_arguments_it->second;
   
   if(run_arguments->empty()) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     *run_arguments=build->get_executable(view?view->file_path:Directories::get().path).string();
     if(run_arguments->empty()) {
       Terminal::get().print("Warning: could not find executable.\n");
@@ -432,14 +441,15 @@ void Project::Clang::debug_start() {
     else {
       dispatcher.post([this, run_arguments, project_path] {
         std::vector<std::pair<boost::filesystem::path, int> > breakpoints;
-        for(size_t c=0;c<Notebook::get().size();c++) {
-          auto view=Notebook::get().get_view(c);
-          if(filesystem::file_in_path(view->file_path, *project_path)) {
-            auto iter=view->get_buffer()->begin();
-            if(view->get_source_buffer()->get_source_marks_at_iter(iter, "debug_breakpoint").size()>0)
-              breakpoints.emplace_back(view->file_path, iter.get_line()+1);
-            while(view->get_source_buffer()->forward_iter_to_source_mark(iter, "debug_breakpoint"))
-              breakpoints.emplace_back(view->file_path, iter.get_line()+1);
+        for(auto &notebook: Notebooks::get().get_notebooks()) {
+          for(auto view: notebook.get_views()) {
+            if(filesystem::file_in_path(view->file_path, *project_path)) {
+              auto iter=view->get_buffer()->begin();
+              if(view->get_source_buffer()->get_source_marks_at_iter(iter, "debug_breakpoint").size()>0)
+                breakpoints.emplace_back(view->file_path, iter.get_line()+1);
+              while(view->get_source_buffer()->forward_iter_to_source_mark(iter, "debug_breakpoint"))
+                breakpoints.emplace_back(view->file_path, iter.get_line()+1);
+            }
           }
         }
         
@@ -505,7 +515,7 @@ void Project::Clang::debug_start() {
             Project::debug_stop.second.first=stop_line;
             Project::debug_stop.second.second=stop_column;
             debug_update_stop();
-            if(auto view=Notebook::get().get_current_view())
+            if(auto view=Notebooks::get().get_current_view())
               view->get_buffer()->place_cursor(view->get_buffer()->get_insert()->get_iter());
           });
         });
@@ -548,7 +558,7 @@ void Project::Clang::debug_step_out() {
 
 void Project::Clang::debug_backtrace() {
   if(debugging) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     auto backtrace=Debug::LLDB::get().get_backtrace();
     
     if(view) {
@@ -590,12 +600,14 @@ void Project::Clang::debug_backtrace() {
         return;
       auto frame=rows[index];
       if(!frame.file_path.empty()) {
-        Notebook::get().open(frame.file_path);
-        if(auto view=Notebook::get().get_current_view()) {
-          Debug::LLDB::get().select_frame(frame.index);
-          
-          view->place_cursor_at_line_index(frame.line_nr-1, frame.line_index-1);
-          view->scroll_to_cursor_delayed(view, true, true);
+        if(auto notebook=Notebooks::get().get_current_notebook()) {
+          notebook->open(frame.file_path);
+          if(auto view=notebook->get_current_view()) {
+            Debug::LLDB::get().select_frame(frame.index);
+            
+            view->place_cursor_at_line_index(frame.line_nr-1, frame.line_index-1);
+            view->scroll_to_cursor_delayed(view, true, true);
+          }
         }
       }
     };
@@ -607,7 +619,7 @@ void Project::Clang::debug_backtrace() {
 
 void Project::Clang::debug_show_variables() {
   if(debugging) {
-    auto view=Notebook::get().get_current_view();
+    auto view=Notebooks::get().get_current_view();
     auto variables=Debug::LLDB::get().get_variables();
     
     Gtk::TextIter iter;
@@ -636,10 +648,12 @@ void Project::Clang::debug_show_variables() {
       auto variable=(*rows)[index];
       Debug::LLDB::get().select_frame(variable.frame_index, variable.thread_index_id);
       if(!variable.file_path.empty()) {
-        Notebook::get().open(variable.file_path);
-        if(auto view=Notebook::get().get_current_view()) {
-          view->place_cursor_at_line_index(variable.line_nr-1, variable.line_index-1);
-          view->scroll_to_cursor_delayed(view, true, true);
+        if(auto notebook=Notebooks::get().get_current_notebook()) {
+          notebook->open(variable.file_path);
+          if(auto view=notebook->get_current_view()) {
+            view->place_cursor_at_line_index(variable.line_nr-1, variable.line_index-1);
+            view->scroll_to_cursor_delayed(view, true, true);
+          }
         }
       }
       if(!variable.declaration_found)
@@ -737,7 +751,7 @@ void Project::Markdown::compile_and_run() {
   std::stringstream stdin_stream, stdout_stream;
   auto exit_status=Terminal::get().process(stdin_stream, stdout_stream, "command -v grip");
   if(exit_status==0) {
-    auto command="grip -b "+filesystem::escape_argument(filesystem::get_short_path(Notebook::get().get_current_view()->file_path).string());
+    auto command="grip -b "+filesystem::escape_argument(filesystem::get_short_path(Notebooks::get().get_current_view()->file_path).string());
     Terminal::get().print("Running: "+command+" in a quiet background process\n");
     Terminal::get().async_process(command, "", nullptr, true);
   }
@@ -746,23 +760,23 @@ void Project::Markdown::compile_and_run() {
 }
 
 void Project::Python::compile_and_run() {
-  auto command="PYTHONUNBUFFERED=1 python "+filesystem::escape_argument(filesystem::get_short_path(Notebook::get().get_current_view()->file_path).string());
+  auto command="PYTHONUNBUFFERED=1 python "+filesystem::escape_argument(filesystem::get_short_path(Notebooks::get().get_current_view()->file_path).string());
   Terminal::get().print("Running "+command+"\n");
-  Terminal::get().async_process(command, Notebook::get().get_current_view()->file_path.parent_path(), [command](int exit_status) {
+  Terminal::get().async_process(command, Notebooks::get().get_current_view()->file_path.parent_path(), [command](int exit_status) {
     Terminal::get().async_print(command+" returned: "+std::to_string(exit_status)+'\n');
   });
 }
 
 void Project::JavaScript::compile_and_run() {
-  auto command="node --harmony "+filesystem::escape_argument(filesystem::get_short_path(Notebook::get().get_current_view()->file_path).string());
+  auto command="node --harmony "+filesystem::escape_argument(filesystem::get_short_path(Notebooks::get().get_current_view()->file_path).string());
   Terminal::get().print("Running "+command+"\n");
-  Terminal::get().async_process(command, Notebook::get().get_current_view()->file_path.parent_path(), [command](int exit_status) {
+  Terminal::get().async_process(command, Notebooks::get().get_current_view()->file_path.parent_path(), [command](int exit_status) {
     Terminal::get().async_print(command+" returned: "+std::to_string(exit_status)+'\n');
   });
 }
 
 void Project::HTML::compile_and_run() {
-  auto uri=Notebook::get().get_current_view()->file_path.string();
+  auto uri=Notebooks::get().get_current_view()->file_path.string();
 #ifdef __APPLE__
   Terminal::get().process("open "+filesystem::escape_argument(uri));
 #else

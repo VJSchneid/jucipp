@@ -1,4 +1,4 @@
-#include "notebook.h"
+#include "notebook_paned.h"
 #include "config.h"
 #include "directories.h"
 #include <fstream>
@@ -8,7 +8,7 @@
 #include "selection_dialog.h"
 #include "gtksourceview-3.0/gtksourceview/gtksourcemap.h"
 
-Notebook::TabLabel::TabLabel(const boost::filesystem::path &path, std::function<void()> on_close) {
+NotebookPaned::TabLabel::TabLabel(const boost::filesystem::path &path, std::function<void()> on_close) {
   set_can_focus(false);
   set_tooltip_text(path.string());
   
@@ -38,57 +38,57 @@ Notebook::TabLabel::TabLabel(const boost::filesystem::path &path, std::function<
   show_all();
 }
 
-Notebook::Notebook() : Gtk::Paned(), notebooks(2) {
+NotebookPaned::NotebookPaned() : Gtk::Paned(), notebooks(2) {
   Gsv::init();
-  
-  for(auto &notebook: notebooks) {
-    notebook.set_scrollable();
-    notebook.set_group_name("source_notebooks");
-    notebook.signal_switch_page().connect([this](Gtk::Widget *widget, guint) {
-      auto hbox=dynamic_cast<Gtk::Box*>(widget);
-      for(size_t c=0;c<hboxes.size();++c) {
-        if(hboxes[c].get()==hbox) {
-          focus_view(source_views[c]);
-          set_current_view(source_views[c]);
-          break;
-        }
-      }
-      last_index=-1;
-    });
-    notebook.signal_page_added().connect([this](Gtk::Widget* widget, guint) {
-      auto hbox=dynamic_cast<Gtk::Box*>(widget);
-      for(size_t c=0;c<hboxes.size();++c) {
-        if(hboxes[c].get()==hbox) {
-          focus_view(source_views[c]);
-          set_current_view(source_views[c]);
-          break;
-        }
-      }
-    });
-    
-    auto provider = Gtk::CssProvider::create();
-      //GtkNotebook-tab-overlap got removed in gtk 3.20, but margin works in 3.20
-#if GTK_VERSION_GE(3, 20)
+      
+    for(auto &notebook: notebooks) {
+      notebook.set_scrollable();
+      notebook.set_group_name("source_notebooks");
+      notebook.signal_switch_page().connect([this](Gtk::Widget *widget, guint) {
+        auto hbox=dynamic_cast<Gtk::Box*>(widget);
+        for(size_t c=0;c<hboxes.size();++c) {
+          if(hboxes[c].get()==hbox) {
+            focus_view(source_views[c]);
+            set_current_view(source_views[c]);
+            break;
+            }
+          }
+          last_index=-1;
+        });
+        notebook.signal_page_added().connect([this](Gtk::Widget* widget, guint) {
+          auto hbox=dynamic_cast<Gtk::Box*>(widget);
+          for(size_t c=0;c<hboxes.size();++c) {
+            if(hboxes[c].get()==hbox) {
+              focus_view(source_views[c]);
+              set_current_view(source_views[c]);
+              break;
+            }
+          }
+        });
+        
+        auto provider = Gtk::CssProvider::create();
+        //GtkNotebook-tab-overlap got removed in gtk 3.20, but margin works in 3.20
+  #if GTK_VERSION_GE(3, 20)
         provider->load_from_data("tab {border-radius: 5px 5px 0 0; padding: 0 4px; margin: 0;}");
-#else
+  #else
         provider->load_from_data(".notebook {-GtkNotebook-tab-overlap: 0px;} tab {border-radius: 5px 5px 0 0; padding: 4px 4px;}");
-#endif
-      notebook.get_style_context()->add_provider(provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  }
-  pack1(notebooks[0], true, true);
+  #endif
+        notebook.get_style_context()->add_provider(provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+      }
+      pack1(notebooks.front(), true, true);
 }
 
-size_t Notebook::size() {
+size_t NotebookPaned::size() {
   return source_views.size();
 }
 
-Source::View* Notebook::get_view(size_t index) {
+Source::View* NotebookPaned::get_view(size_t index) {
   if(index>=size())
     return nullptr;
   return source_views[index];
 }
 
-Source::View* Notebook::get_current_view() {
+Source::View* NotebookPaned::get_current_view() {
   if(intermediate_view) {
     for(auto view: source_views) {
       if(view==intermediate_view)
@@ -108,11 +108,11 @@ Source::View* Notebook::get_current_view() {
   return nullptr;
 }
 
-std::vector<Source::View*> &Notebook::get_views() {
+std::vector<Source::View*> &NotebookPaned::get_views() {
   return source_views;
 }
 
-void Notebook::open(const boost::filesystem::path &file_path_, size_t notebook_index) {
+void NotebookPaned::open(const boost::filesystem::path &file_path_, size_t notebook_index) {
   auto file_path=filesystem::get_normal_path(file_path_);
   
   if(notebook_index==1 && !split)
@@ -409,7 +409,7 @@ void Notebook::open(const boost::filesystem::path &file_path_, size_t notebook_i
   focus_view(source_view);
 }
 
-void Notebook::configure(size_t index) {
+void NotebookPaned::configure(size_t index) {
   auto source_font_description=Pango::FontDescription(Config::get().source.font);
   auto source_map_font_desc=Pango::FontDescription(static_cast<std::string>(source_font_description.get_family())+" "+Config::get().source.map_font_size); 
   source_maps.at(index)->override_font(source_map_font_desc);
@@ -421,20 +421,20 @@ void Notebook::configure(size_t index) {
     hboxes.at(index)->remove(*source_maps.at(index));
 }
 
-bool Notebook::save(size_t index) {
+bool NotebookPaned::save(size_t index) {
   if(!source_views[index]->save())
     return false;
   Project::on_save(index);
   return true;
 }
 
-bool Notebook::save_current() {
+bool NotebookPaned::save_current() {
   if(auto view=get_current_view())
     return save(get_index(view));
   return false;
 }
 
-void Notebook::save_session() {
+void NotebookPaned::save_session() {
   try {
     boost::property_tree::ptree pt_root, pt_files;
     pt_root.put("folder", Directories::get().path.string());
@@ -448,14 +448,14 @@ void Notebook::save_session() {
       }
     }
     pt_root.add_child("files", pt_files);
-    if(auto view=Notebook::get().get_current_view())
+    if(auto view=get_current_view())
       pt_root.put("current_file", view->file_path.string());
     boost::property_tree::write_json((Config::get().home_juci_path/"last_session.json").string(), pt_root);
   }
   catch(const std::exception &) {}
 }
 
-bool Notebook::close(size_t index) {
+bool NotebookPaned::close(size_t index) {
   if(auto view=get_view(index)) {
     if(view->get_buffer()->get_modified()){
       if(!save_modified_dialog(index))
@@ -514,7 +514,7 @@ bool Notebook::close(size_t index) {
   return true;
 }
 
-void Notebook::delete_cursor_locations(Source::View *view) {
+void NotebookPaned::delete_cursor_locations(Source::View *view) {
   size_t cursor_locations_index=0;
   for(auto it=cursor_locations.begin();it!=cursor_locations.end();) {
     if(it->view==view) {
@@ -532,11 +532,11 @@ void Notebook::delete_cursor_locations(Source::View *view) {
     current_cursor_location=cursor_locations.size()-1;
 }
 
-bool Notebook::close_current() {
+bool NotebookPaned::close_current() {
   return close(get_index(get_current_view()));
 }
 
-void Notebook::next() {
+void NotebookPaned::next() {
   if(auto view=get_current_view()) {
     auto notebook_page=get_notebook_page(get_index(view));
     int page=notebook_page.second+1;
@@ -547,7 +547,7 @@ void Notebook::next() {
   }
 }
 
-void Notebook::previous() {
+void NotebookPaned::previous() {
   if(auto view=get_current_view()) {
     auto notebook_page=get_notebook_page(get_index(view));
     int page=notebook_page.second-1;
@@ -558,7 +558,7 @@ void Notebook::previous() {
   }
 }
 
-void Notebook::toggle_split() {
+void NotebookPaned::toggle_split() {
   if(!split) {
     pack2(notebooks[1], true, true);
     set_position(get_width()/2);
@@ -580,13 +580,13 @@ void Notebook::toggle_split() {
   }
   split=!split;
 }
-void Notebook::toggle_tabs() {
+void NotebookPaned::toggle_tabs() {
   //Show / Hide tabs for each notebook.
-  for(auto &notebook : Notebook::notebooks)
+  for(auto &notebook : NotebookPaned::notebooks)
     notebook.set_show_tabs(!notebook.get_show_tabs());
 }
 
-boost::filesystem::path Notebook::get_current_folder() {
+boost::filesystem::path NotebookPaned::get_current_folder() {
   if(!Directories::get().path.empty())
     return Directories::get().path;
   else if(auto view=get_current_view())
@@ -595,7 +595,7 @@ boost::filesystem::path Notebook::get_current_folder() {
     return boost::filesystem::path();
 }
 
-void Notebook::update_status(Source::View *view) {
+void NotebookPaned::update_status(Source::View *view) {
   if(view->update_status_location)
     view->update_status_location(view);
   if(view->update_status_file_path)
@@ -608,7 +608,7 @@ void Notebook::update_status(Source::View *view) {
     view->update_status_state(view);
 }
 
-void Notebook::clear_status() {
+void NotebookPaned::clear_status() {
   status_location.set_text("");
   status_file_path.set_text("");
   status_branch.set_text("");
@@ -616,7 +616,7 @@ void Notebook::clear_status() {
   status_state.set_text("");
 }
 
-size_t Notebook::get_index(Source::View *view) {
+size_t NotebookPaned::get_index(Source::View *view) {
   for(size_t c=0;c<size();++c) {
     if(source_views[c]==view)
       return c;
@@ -624,7 +624,7 @@ size_t Notebook::get_index(Source::View *view) {
   return -1;
 }
 
-Source::View *Notebook::get_view(size_t notebook_index, int page) {
+Source::View *NotebookPaned::get_view(size_t notebook_index, int page) {
   if(notebook_index==static_cast<size_t>(-1) || notebook_index>=notebooks.size() ||
      page<0 || page>=notebooks[notebook_index].get_n_pages())
     return nullptr;
@@ -633,12 +633,12 @@ Source::View *Notebook::get_view(size_t notebook_index, int page) {
   return dynamic_cast<Source::View*>(scrolled_window->get_children()[0]);
 }
 
-void Notebook::focus_view(Source::View *view) {
+void NotebookPaned::focus_view(Source::View *view) {
   intermediate_view=view;
   view->grab_focus();
 }
 
-std::pair<size_t, int> Notebook::get_notebook_page(size_t index) {
+std::pair<size_t, int> NotebookPaned::get_notebook_page(size_t index) {
   if(index>=hboxes.size())
     return {-1, -1};
   for(size_t c=0;c<notebooks.size();++c) {
@@ -649,7 +649,7 @@ std::pair<size_t, int> Notebook::get_notebook_page(size_t index) {
   return {-1, -1};
 }
 
-void Notebook::set_current_view(Source::View *view) {
+void NotebookPaned::set_current_view(Source::View *view) {
   intermediate_view=nullptr;
   if(current_view!=view) {
     if(auto view=get_current_view()) {
@@ -662,7 +662,7 @@ void Notebook::set_current_view(Source::View *view) {
   }
 }
 
-bool Notebook::save_modified_dialog(size_t index) {
+bool NotebookPaned::save_modified_dialog(size_t index) {
   Gtk::MessageDialog dialog(*static_cast<Gtk::Window*>(get_toplevel()), "Save file!", false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO);
   dialog.set_default_response(Gtk::RESPONSE_YES);
   dialog.set_secondary_text("Do you want to save: " + get_view(index)->file_path.string()+" ?");

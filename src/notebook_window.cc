@@ -2,6 +2,6 @@
 
 NotebookWindow::NotebookWindow() {
     set_title("juCi++ Notebook");
-    add(notebook);
+    add(Notebooks::get().create());
     show_all();
 }

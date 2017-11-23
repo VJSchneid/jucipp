@@ -1,35 +1,31 @@
-#ifndef JUCI_NOTEBOOK_H_
-#define JUCI_NOTEBOOK_H_
+#ifndef JUCI_NOTEBOOK_PANED_H
+#define JUCI_NOTEBOOK_PANED_H
 
 #include <iostream>
-#include "gtkmm.h"
-#include "source.h"
-#include "source_clang.h"
 #include <type_traits>
 #include <map>
 #include <sigc++/sigc++.h>
+#include "gtkmm.h"
+#include "source.h"
+#include "source_clang.h"
 
-class Notebook : public Gtk::Paned {
+class NotebookPaned: public Gtk::Paned {
+private:
   class TabLabel : public Gtk::EventBox {
   public:
     TabLabel(const boost::filesystem::path &path, std::function<void()> on_close);
     Gtk::Label label;
   };
-  
+    
   class CursorLocation {
   public:
     CursorLocation(Source::View *view, Glib::RefPtr<Gtk::TextBuffer::Mark> mark) : view(view), mark(mark) {}
     Source::View *view;
     Glib::RefPtr<Gtk::TextBuffer::Mark> mark;
   };
-  
+    
 public:
-  Notebook();
-  
-  static Notebook &get() {
-    static Notebook singleton;
-    return singleton;
-  }
+  NotebookPaned();
   
   size_t size();
   Source::View* get_view(size_t index);
@@ -46,10 +42,10 @@ public:
   void next();
   void previous();
   void toggle_split();
-  /// Hide/Show tabs.		
+  /// Hide/Show tabs.
   void toggle_tabs();
   boost::filesystem::path get_current_folder();
-
+  
   Gtk::Label status_location;
   Gtk::Label status_file_path;
   Gtk::Label status_branch;
@@ -75,10 +71,10 @@ private:
   
   std::vector<Gtk::Notebook> notebooks;
   std::vector<Source::View*> source_views; //Is NOT freed in destructor, this is intended for quick program exit.
-  std::vector<std::unique_ptr<Gtk::Widget> > source_maps;
-  std::vector<std::unique_ptr<Gtk::ScrolledWindow> > scrolled_windows;
-  std::vector<std::unique_ptr<Gtk::Box> > hboxes;
-  std::vector<std::unique_ptr<TabLabel> > tab_labels;
+  std::vector<std::unique_ptr<Gtk::Widget>> source_maps;
+  std::vector<std::unique_ptr<Gtk::ScrolledWindow>> scrolled_windows;
+  std::vector<std::unique_ptr<Gtk::Box>> hboxes;
+  std::vector<std::unique_ptr<TabLabel>> tab_labels;
   
   bool split=false;
   size_t last_index=-1;
@@ -89,4 +85,5 @@ private:
   
   bool save_modified_dialog(size_t index);
 };
-#endif  // JUCI_NOTEBOOK_H_
+
+#endif // JUCI_NOTEBOOK_PANED_H
